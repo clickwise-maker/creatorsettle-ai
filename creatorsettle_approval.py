@@ -1,49 +1,53 @@
 """
 CreatorSettle AI — Approval Layer
-Creator one-tap approve / reject before any action is executed.
+File-persisted approval requests (survives process restart).
 """
 
+import json
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, Optional
 
-class ApprovalRequest:
-    def __init__(self, txn_id: str, action: str, message: str, expires_minutes: int = 30):
-        self.txn_id = txn_id
-        self.action = action
-        self.message = message
-        self.created = datetime.utcnow()
-        self.expires = self.created + timedelta(minutes=expires_minutes)
-        self.status = "PENDING"  # PENDING / APPROVED / REJECTED / EXPIRED
+APPROVAL_FILE = Path("approvals.json")
 
-    def is_expired(self) -> bool:
-        return datetime.utcnow() > self.expires
+def _load() -> Dict:
+    if APPROVAL_FILE.exists():
+        try:
+            return json.loads(APPROVAL_FILE.read_text())
+        except Exception:
+            return {}
+    return {}
 
-    def approve(self) -> bool:
-        if self.status != "PENDING" or self.is_expired():
-            return False
-        self.status = "APPROVED"
-        return True
+def _save(data: Dict):
+    APPROVAL_FILE.write_text(json.dumps(data, indent=2))
 
-    def reject(self) -> bool:
-        if self.status != "PENDING":
-            return False
-        self.status = "REJECTED"
-        return True
-
-# In-memory store for demo
-_requests: Dict[str, ApprovalRequest] = {}
-
-def propose(txn_id: str, action: str, message: str) -> str:
-    req = ApprovalRequest(txn_id, action, message)
-    _requests[txn_id] = req
-    return req.status
+def propose(txn_id: str, action: str, message: str, expires_minutes: int = 30) -> str:
+    data = _load()
+    data[txn_id] = {
+        "action": action,
+        "message": message,
+        "status": "PENDING",
+        "created": datetime.utcnow().isoformat() + "Z",
+        "expires": (datetime.utcnow() + timedelta(minutes=expires_minutes)).isoformat() + "Z",
+    }
+    _save(data)
+    return "PENDING"
 
 def decide(txn_id: str, decision: str) -> Optional[str]:
-    req = _requests.get(txn_id)
+    data = _load()
+    req = data.get(txn_id)
     if not req:
         return None
+    if req["status"] != "PENDING":
+        return req["status"]
+    # Check expiry
+    if datetime.fromisoformat(req["expires"].replace("Z", "")) < datetime.utcnow():
+        req["status"] = "EXPIRED"
+        _save(data)
+        return "EXPIRED"
     if decision.upper() == "APPROVE":
-        return "APPROVED" if req.approve() else req.status
-    if decision.upper() == "REJECT":
-        return "REJECTED" if req.reject() else req.status
-    return req.status
+        req["status"] = "APPROVED"
+    elif decision.upper() == "REJECT":
+        req["status"] = "REJECTED"
+    _save(data)
+    return req["status"]
