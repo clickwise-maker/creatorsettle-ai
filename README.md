@@ -22,7 +22,7 @@ with `capture_type: OUTSTANDING_BALANCE`.
 - Credentials are read from `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET`.
 - `PAYPAL_BASE_URL` can override the API base URL. Production credentials/base URL can move real money; test in Sandbox first.
 - Inputs are validated server-side.
-- Duplicate execution of the same persisted approval is blocked.
+- Duplicate execution of the same persisted approval is blocked, and its approval ID is sent as `PayPal-Request-Id` for PayPal-side idempotency.
 - HTTP 202 is labelled `REQUEST_ACCEPTED`, not completed.
 - A confirmed state requires an HTTP 200/201 response whose JSON status is `COMPLETED`.
 - If the network result is uncertain, the request is intentionally not auto-retried. Check PayPal before creating another request.
