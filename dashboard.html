@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CreatorSettle AI — Seller Dashboard</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0f0f0f; color: #f4f1ea; margin: 0; padding: 20px; }
+  h1 { font-size: 1.4rem; }
+  .card { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 16px; margin: 12px 0; }
+  .action { font-weight: bold; }
+  .RETRY { color: #6ee7b7; }
+  .ROUTE { color: #fbbf24; }
+  .ESCALATE { color: #f87171; }
+  .HOLD { color: #94a3b8; }
+  button { background: #d4af37; color: #000; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
+  small { color: #888; }
+</style>
+</head>
+<body>
+<h1>CreatorSettle AI — Seller Dashboard</h1>
+<p>Prototype: connects to local demo data. Approval and audit are file-backed.</p>
+
+<div id="status" class="card">Loading...</div>
+<div id="txns"></div>
+
+<script>
+async function load() {
+  // In real use this would call a small backend. For prototype we show the expected flow.
+  document.getElementById("status").innerHTML = `
+    <strong>Mode:</strong> Prototype<br>
+    <small>Real OAuth + test order when credentials present. Recovery execution is instruction-based unless PayPal API supports it.</small>
+  `;
+  const sample = [
+    { id: "MOCK-001", amount: 120.50, status: "INSUFFICIENT_FUNDS", action: "ROUTE", msg: "Suggest different funding source" },
+    { id: "MOCK-002", amount: 89.00, status: "EXPIRED_CARD", action: "ESCALATE", msg: "Update payment method" },
+    { id: "MOCK-003", amount: 250.00, status: "FRAUD_FILTER", action: "ESCALATE", msg: "Review required" },
+  ];
+  const container = document.getElementById("txns");
+  container.innerHTML = sample.map(t => `
+    <div class="card">
+      <strong>${t.id}</strong> — $${t.amount}<br>
+      Status: ${t.status}<br>
+      <span class="action ${t.action}">${t.action}</span>: ${t.msg}<br>
+      <button onclick="alert('Approval recorded (prototype)')">Approve</button>
+      <button onclick="alert('Rejected')">Reject</button>
+    </div>
+  `).join("");
+}
+load();
+</script>
+</body>
+</html>
