@@ -3,6 +3,7 @@ CreatorSettle AI — PayPal subscription recovery.
 Supported real action: capture an outstanding balance on a PayPal subscription.
 This is NOT recovery of arbitrary failed one-time payments.
 """
+import hashlib
 import os
 import re
 from decimal import Decimal, InvalidOperation
@@ -65,16 +66,26 @@ def capture_outstanding_balance(
     amount: str,
     currency: str = "USD",
     note: str = "Capture outstanding balance",
+    request_id: Optional[str] = None,
 ) -> Dict:
     """
     Submit one PayPal outstanding-balance capture request.
-    202 means accepted, not confirmed. Callers must not label it captured.
+    PayPal-Request-Id makes retries of the same request idempotent within PayPal's
+    documented retention window. A 202 means accepted, not confirmed.
     """
     invalid = _validate_capture(subscription_id, amount, currency)
     if invalid:
         return {"success": False, "state": "FAILED", "reason": invalid, "raw": None}
     if not _valid_base_url():
         return {"success": False, "state": "FAILED", "reason": "invalid_paypal_base_url", "raw": None}
+
+    normalized_amount = format(Decimal(str(amount)), ".2f")
+    if not request_id:
+        # Stable key for direct callers; the dashboard passes its persisted approval ID.
+        digest = hashlib.sha256(f"{subscription_id}|{normalized_amount}|{currency}".encode("utf-8")).hexdigest()[:32]
+        request_id = "CS-" + digest
+    if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,38}", request_id):
+        return {"success": False, "state": "FAILED", "reason": "invalid_request_id", "raw": None}
 
     token = get_access_token()
     if not token:
@@ -83,7 +94,7 @@ def capture_outstanding_balance(
     payload = {
         "note": str(note)[:255],
         "capture_type": "OUTSTANDING_BALANCE",
-        "amount": {"value": format(Decimal(str(amount)), ".2f"), "currency_code": currency},
+        "amount": {"value": normalized_amount, "currency_code": currency},
     }
     try:
         resp = requests.post(
@@ -92,6 +103,7 @@ def capture_outstanding_balance(
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
+                "PayPal-Request-Id": request_id,
             },
             json=payload,
             timeout=20,
@@ -103,19 +115,20 @@ def capture_outstanding_balance(
 
         if resp.status_code == 202:
             return {"success": True, "state": "REQUEST_ACCEPTED", "reason": "request_accepted_pending_verification",
-                    "status_code": resp.status_code, "raw": raw}
+                    "status_code": resp.status_code, "request_id": request_id, "raw": raw}
         if resp.status_code in (200, 201):
             api_status = raw.get("status") if isinstance(raw, dict) else None
             if str(api_status).upper() == "COMPLETED":
                 return {"success": True, "state": "CAPTURE_CONFIRMED", "reason": "capture_confirmed",
-                        "status_code": resp.status_code, "raw": raw}
+                        "status_code": resp.status_code, "request_id": request_id, "raw": raw}
             return {"success": True, "state": "REQUEST_ACCEPTED", "reason": "response_requires_verification",
-                    "status_code": resp.status_code, "raw": raw}
+                    "status_code": resp.status_code, "request_id": request_id, "raw": raw}
         return {"success": False, "state": "FAILED", "reason": "api_error",
-                "status_code": resp.status_code, "raw": raw}
+                "status_code": resp.status_code, "request_id": request_id, "raw": raw}
     except requests.RequestException:
         # Outcome may be ambiguous after a timeout; do not auto-retry a money movement.
-        return {"success": False, "state": "OUTCOME_UNKNOWN", "reason": "network_error_outcome_unknown", "raw": None}
+        return {"success": False, "state": "OUTCOME_UNKNOWN", "reason": "network_error_outcome_unknown",
+                "request_id": request_id, "raw": None}
 
 
 def get_subscription_details(subscription_id: str) -> Optional[Dict]:
