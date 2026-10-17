@@ -1,6 +1,5 @@
 """
 CreatorSettle AI — Audit Logger
-Hash-chain with verification and tamper detection.
 """
 
 import json
@@ -41,16 +40,17 @@ def verify() -> bool:
         prev = rec["hash"]
     return True
 
-def test_tamper():
-    """Create a tamper and confirm verify() catches it."""
+def test_tamper() -> bool:
+    """Temporarily tamper and confirm detection. Restores original file."""
     if not AUDIT_FILE.exists():
         append({"test": "genesis"})
-    # Tamper the last record
-    lines = AUDIT_FILE.read_text().strip().splitlines()
+    original = AUDIT_FILE.read_text()
+    lines = original.strip().splitlines()
     last = json.loads(lines[-1])
     last["action"] = "TAMPERED"
     lines[-1] = json.dumps(last)
     AUDIT_FILE.write_text("\n".join(lines) + "\n")
-    result = verify()
-    # Restore by re-writing clean (for demo)
-    return not result  # True means tamper was detected
+    detected = not verify()
+    # Restore
+    AUDIT_FILE.write_text(original)
+    return detected
