@@ -1,7 +1,6 @@
 """
 CreatorSettle AI — Decision Engine
-Honest actions: RETRY / ROUTE / HOLD / ESCALATE
-Where PayPal does not support automatic recovery, return a safe instruction instead of fake success.
+Honest: RETRY only when real recovery is supported. Otherwise instruction.
 """
 
 import os
@@ -9,50 +8,45 @@ from typing import Dict, Tuple, Optional
 import requests
 
 def classify_failure(status: Optional[str]) -> str:
-    """Map real PayPal-like statuses to internal codes."""
     if not status:
         return "UNKNOWN"
     s = status.upper()
-    if s in ("DENIED", "FAILED", "DECLINED"):
+    if s in ("DENIED", "FAILED", "DECLINED", "VOIDED"):
         return "FAILED"
-    if "INSUFFICIENT" in s or "FUNDS" in s:
-        return "INSUFFICIENT_FUNDS"
-    if "EXPIRED" in s or "CARD" in s:
-        return "EXPIRED_CARD"
-    if "FRAUD" in s or "RISK" in s:
-        return "FRAUD_FILTER"
     if s in ("PENDING", "PROCESSING"):
         return "PENDING"
-    return s
+    return "UNKNOWN"
 
 def decide(transaction: Dict) -> Tuple[str, float, str, str]:
     """
     Returns: action, confidence, message, execution_type
-    execution_type: "api" | "instruction" | "none"
+    execution_type: "instruction" | "none"
+    Note: Real recovery of an existing failed transaction is not supported
+    by the available Sandbox scope. Therefore RETRY never uses a fake order.
     """
     code = classify_failure(transaction.get("decline_code") or transaction.get("status"))
     retries = transaction.get("retry_count", 0)
+    source = transaction.get("source", "unknown")
 
-    if code in ("FRAUD_FILTER", "RISK"):
-        return "ESCALATE", 0.95, "Fraud/risk flag — stop and ask seller to review.", "none"
-
-    if code == "EXPIRED_CARD":
-        return "ESCALATE", 0.90, "Payment method expired — seller must update card. No auto-retry.", "instruction"
-
-    if code == "INSUFFICIENT_FUNDS":
-        if retries >= 2:
-            return "ESCALATE", 0.85, "Repeated insufficient funds — ask seller to add funds or change method.", "instruction"
-        return "ROUTE", 0.80, "Insufficient funds — suggest seller try a different funding source.", "instruction"
-
-    if code in ("FAILED", "DENIED", "DECLINED"):
+    if code == "FAILED":
         if retries == 0:
-            return "RETRY", 0.70, "Transient failure — safe to retry once via Orders API.", "api"
-        return "ESCALATE", 0.75, "Retry already attempted — escalate to seller.", "instruction"
+            return (
+                "RETRY",
+                0.65,
+                f"Failed status detected (source={source}). No supported API to retry this exact transaction. Seller should review in PayPal dashboard.",
+                "instruction",
+            )
+        return (
+            "ESCALATE",
+            0.75,
+            "Already attempted — escalate to seller for manual review.",
+            "instruction",
+        )
 
     if code == "PENDING":
-        return "HOLD", 0.60, "Payment still pending — do not retry yet.", "none"
+        return "HOLD", 0.60, "Still pending — do not act.", "none"
 
-    return "HOLD", 0.40, "Unclear status — hold and ask seller to check PayPal dashboard.", "instruction"
+    return "HOLD", 0.40, "Unclear status — check PayPal dashboard.", "instruction"
 
 class LLMClient:
     def __init__(self):
@@ -88,12 +82,10 @@ def decide_with_ai(transaction: Dict, llm_client: Optional[LLMClient] = None) ->
         llm_client = LLMClient()
     if not llm_client.api_key:
         return action, conf, msg + " (rules)", exec_type
-
-    prompt = f"""You are a payments recovery assistant.
+    prompt = f"""Payments recovery assistant.
 Transaction: {transaction}
-Recommended action: {action}
-Execution type: {exec_type}
-Write a short clear message for the seller. Do not claim money was recovered if execution_type is not 'api'."""
+Action: {action}
+Write a short seller message. Do not claim recovery happened."""
     enhanced = llm_client.complete(prompt)
     if enhanced:
         return action, conf, enhanced.strip(), exec_type
