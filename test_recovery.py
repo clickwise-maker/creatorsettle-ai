@@ -43,7 +43,7 @@ def test_confirmed_capture_mock():
             result = capture_outstanding_balance("I-TEST12345", "20.00")
     assert result["success"] is True
     assert result["state"] == "CAPTURE_CONFIRMED"
-    assert post.call_args.kwargs["json"]["amount"]["value"] == "20.00"
+    assert post.call_args.kwargs["json"]["amount"]["value"] == "20.00"\n    assert post.call_args.kwargs["headers"]["PayPal-Request-Id"]
 
 
 def test_accepted_is_not_confirmed():
