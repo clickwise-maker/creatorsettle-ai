@@ -1,6 +1,21 @@
+# Secrets and local credentials
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local approval and audit state
+approvals.json
+approvals.json.tmp
+audit.jsonl
 demo_audit.jsonl
 demo_approvals.json
-__pycache__/
-*.pyc
-.env
-.venv/
+
+# Test/runtime artifacts
+.pytest_cache/
+.coverage
