@@ -5,27 +5,29 @@ Honest settlement recovery prototype.
 ## What is real
 
 - PayPal Sandbox OAuth (when credentials present)
-- Transaction Search fetch (when permitted)
-- File-persisted approval
+- Transaction Search fetch of failed-like statuses (when permitted)
+- File-persisted approval with server-side validation
 - Hash-chain audit with tamper detection
 - Decision engine (rules + optional LLM message)
+- Local dashboard connected to Flask backend (binds to 127.0.0.1)
 
-## What is not real / simulated
+## What is simulated / not recovery
 
-- **Recovery of an existing failed transaction** — PayPal Sandbox scope used here does not support retrying a specific failed capture. Therefore the agent returns an **instruction**, not an API recovery.
-- Creating a new $10 order is **not** treated as recovery of a previous failure.
-- Status re-verification after action is limited (Transaction Search does not support easy single-ID lookup in this prototype).
-- Dashboard buttons currently show the intended flow; full live backend is out of scope for this submission.
+- **Issuing an instruction is not payment recovery.** The agent does not retry or reroute an existing failed PayPal transaction.
+- Creating a new order is not used as recovery.
+- Status re-verification after an action returns `None` (single-ID lookup not supported in this scope).
+- No authentication or CSRF protection. Dashboard is local-only by default.
+
+## What is unverified
+
+- Concurrent multi-process safety beyond a simple thread lock.
+- Full end-to-end recovery of a real failed capture.
 
 ## Quick start
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env
 python test_creatorsettle.py
-python creatorsettle_demo.py
+python backend.py
+# open http://127.0.0.1:5000
 ```
-
-## Honesty
-
-No claim is made that a failed payment was automatically recovered. The agent diagnoses, asks for approval, and either delivers a clear instruction or blocks the action.
