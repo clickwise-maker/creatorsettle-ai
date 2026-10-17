@@ -2,101 +2,193 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CreatorSettle AI — Seller Dashboard</title>
 <style>
-  body { font-family: system-ui, sans-serif; background: #0f0f0f; color: #f4f1ea; margin: 0; padding: 20px; }
+  body { font-family: system-ui, sans-serif; background: #0f0f0f; color: #f4f1ea; margin: 0; padding: 20px; max-width: 1000px; }
   h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.1rem; }
   .card { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 16px; margin: 12px 0; }
   .action { font-weight: bold; }
-  .RETRY { color: #6ee7b7; }
-  .ESCALATE { color: #f87171; }
-  .HOLD { color: #94a3b8; }
-  button { background: #d4af37; color: #000; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 8px; }
+  .RETRY { color: #6ee7b7; } .ESCALATE { color: #f87171; } .HOLD { color: #94a3b8; }
+  button { background: #d4af37; color: #000; border: none; padding: 9px 14px; border-radius: 4px; cursor: pointer; margin: 5px 8px 5px 0; }
   button.reject { background: #555; color: #fff; }
-  small { color: #888; }
-  .status { font-weight: bold; }
-  .PENDING { color: #fbbf24; }
-  .APPROVED { color: #6ee7b7; }
-  .REJECTED { color: #f87171; }
-  .EXECUTED { color: #6ee7b7; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  input, select { box-sizing: border-box; background: #101010; color: #fff; border: 1px solid #555; border-radius: 4px; padding: 10px; margin: 4px 8px 8px 0; max-width: 100%; }
+  label { display: inline-block; margin-top: 8px; }
+  small { color: #aaa; }
+  .status { font-weight: bold; } .PENDING { color: #fbbf24; } .APPROVED { color: #6ee7b7; }
+  .REJECTED, .FAILED, .BLOCKED { color: #f87171; } .EXECUTED, .CAPTURE_CONFIRMED { color: #6ee7b7; }
+  .warning { border-color: #9a6b24; }
 </style>
 </head>
 <body>
 <h1>CreatorSettle AI — Seller Dashboard</h1>
-<p>Local only. Approvals persisted in approvals.json.</p>
+<p>Local only. Approvals are persisted in approvals.json. Real payment actions require a separate explicit approval and execution click.</p>
 
-<div id="status" class="card">Loading...</div>
+<section class="card warning">
+  <h2>PayPal subscription outstanding-balance capture</h2>
+  <p><small>For an existing PayPal subscription only. This does not retry arbitrary failed one-time payments. Confirm the subscription ID and amount in PayPal before proceeding. Sandbox is the default unless PAYPAL_BASE_URL is changed.</small></p>
+  <form id="capture-form">
+    <label for="subscription-id">Subscription ID</label><br>
+    <input id="subscription-id" name="subscription_id" required minlength="5" maxlength="64" pattern="[A-Za-z0-9_-]+" placeholder="I-XXXXXXXXXXXX" autocomplete="off"><br>
+    <label for="capture-amount">Amount to capture</label><br>
+    <input id="capture-amount" name="amount" required type="number" min="0.01" max="9999999999.99" step="0.01" placeholder="20.00"><br>
+    <label for="capture-currency">Currency</label><br>
+    <select id="capture-currency" name="currency"><option value="USD">USD</option><option value="INR">INR</option><option value="GBP">GBP</option><option value="EUR">EUR</option><option value="AUD">AUD</option><option value="CAD">CAD</option></select><br>
+    <button type="submit">Create capture approval request</button>
+  </form>
+  <div id="capture-result" aria-live="polite"></div>
+</section>
+
+<div id="status" class="card" aria-live="polite">Loading transactions...</div>
 <div id="txns"></div>
 
 <script>
 function el(tag, text, cls) {
   const e = document.createElement(tag);
-  if (text) e.textContent = text;
+  if (text !== undefined && text !== null) e.textContent = String(text);
   if (cls) e.className = cls;
   return e;
 }
+async function api(url, options = {}) {
+  const response = await fetch(url, options);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || data.reason || ("HTTP " + response.status));
+  return data;
+}
+function postJson(url, body) {
+  return api(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+}
+
+document.getElementById("capture-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const out = document.getElementById("capture-result");
+  out.replaceChildren(el("p", "Creating approval request..."));
+  const body = {
+    subscription_id: document.getElementById("subscription-id").value.trim(),
+    amount: document.getElementById("capture-amount").value,
+    currency: document.getElementById("capture-currency").value
+  };
+  try {
+    const data = await postJson("/api/subscription-capture/propose", body);
+    renderCaptureRequest(out, data);
+  } catch (error) {
+    out.replaceChildren(el("p", "Blocked: " + error.message, "BLOCKED"));
+  }
+});
+
+function renderCaptureRequest(out, data) {
+  out.replaceChildren();
+  const panel = el("div", null, "card");
+  panel.appendChild(el("p", "Request: " + data.request_id));
+  panel.appendChild(el("p", "Subscription: " + data.subscription_id));
+  panel.appendChild(el("p", "Requested amount: " + data.currency + " " + data.amount));
+  panel.appendChild(el("p", "Approval status: " + data.status, "status " + data.status));
+  if (data.status === "PENDING") {
+    const approve = el("button", "Approve capture request");
+    approve.onclick = async () => {
+      if (!confirm("Approve capture of " + data.currency + " " + data.amount + " from subscription " + data.subscription_id + "? This can move real money if production credentials are configured.")) return;
+      approve.disabled = true;
+      try {
+        const result = await api("/api/subscription-capture/approve/" + encodeURIComponent(data.request_id), {method: "POST"});
+        renderCaptureRequest(out, {...data, status: result.status});
+      } catch (error) { approve.disabled = false; out.appendChild(el("p", error.message, "FAILED")); }
+    };
+    const reject = el("button", "Reject", "reject");
+    reject.onclick = async () => {
+      reject.disabled = true;
+      try {
+        const result = await api("/api/subscription-capture/reject/" + encodeURIComponent(data.request_id), {method: "POST"});
+        renderCaptureRequest(out, {...data, status: result.status});
+      } catch (error) { reject.disabled = false; out.appendChild(el("p", error.message, "FAILED")); }
+    };
+    panel.appendChild(approve);
+    panel.appendChild(reject);
+  } else if (data.status === "APPROVED") {
+    panel.appendChild(el("p", "Approved, but no payment has been submitted yet."));
+    const execute = el("button", "Submit capture to PayPal");
+    execute.onclick = async () => {
+      if (!confirm("Submit one PayPal outstanding-balance capture request for " + data.currency + " " + data.amount + "? Do not click again if the result is uncertain.")) return;
+      execute.disabled = true;
+      try {
+        const result = await api("/api/subscription-capture/execute/" + encodeURIComponent(data.request_id), {method: "POST"});
+        panel.appendChild(el("p", "Result state: " + result.state, "status " + result.state));
+        panel.appendChild(el("p", "Result: " + result.reason));
+        if (result.recovery && result.recovery.raw) {
+          const details = el("details");
+          details.appendChild(el("summary", "PayPal response details"));
+          const pre = el("pre", JSON.stringify(result.recovery.raw, null, 2));
+          details.appendChild(pre);
+          panel.appendChild(details);
+        }
+      } catch (error) {
+        panel.appendChild(el("p", "Result uncertain or blocked: " + error.message + ". Check PayPal before attempting anything else.", "FAILED"));
+      }
+    };
+    panel.appendChild(execute);
+  } else if (data.status === "EXECUTED") {
+    panel.appendChild(el("p", "This request was already claimed for execution. Do not submit it again; verify the result in PayPal."));
+  } else if (data.status === "REJECTED" || data.status === "EXPIRED") {
+    panel.appendChild(el("p", "No capture will be submitted for this request."));
+  } else {
+    panel.appendChild(el("p", "This request cannot be executed in its current state."));
+  }
+  out.appendChild(panel);
+}
 
 async function load() {
-  const res = await fetch("/api/transactions");
-  const txns = await res.json();
-  document.getElementById("status").textContent = "Transactions loaded: " + txns.length;
+  const status = document.getElementById("status");
   const container = document.getElementById("txns");
-  container.innerHTML = "";
-  txns.forEach(t => {
-    const card = el("div", null, "card");
-    card.appendChild(el("strong", t.id));
-    card.appendChild(document.createTextNode(" — " + t.currency + " " + t.amount + " "));
-    card.appendChild(el("small", "(" + t.source + ")"));
-    card.appendChild(document.createElement("br"));
-    card.appendChild(document.createTextNode("Status: " + (t.status || "")));
-    card.appendChild(document.createElement("br"));
-    const act = el("span", t.proposed_action, "action " + t.proposed_action);
-    card.appendChild(document.createTextNode("Proposed: "));
-    card.appendChild(act);
-    card.appendChild(document.createElement("br"));
-    card.appendChild(el("small", t.message || ""));
-    card.appendChild(document.createElement("br"));
-    const st = el("span", t.approval_status, "status " + t.approval_status);
-    card.appendChild(document.createTextNode("Approval: "));
-    card.appendChild(st);
-    card.appendChild(document.createElement("br"));
-
-    const approveBtn = el("button", "Approve");
-    approveBtn.onclick = () => doApprove(t.id, t.proposed_action);
-    const rejectBtn = el("button", "Reject", "reject");
-    rejectBtn.onclick = () => doReject(t.id);
-    card.appendChild(approveBtn);
-    card.appendChild(rejectBtn);
-    container.appendChild(card);
-  });
-}
-
-async function doApprove(id, action) {
-  await fetch("/api/propose/" + id, {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({action: action, message: "From dashboard"})
-  });
-  const res = await fetch("/api/approve/" + id, {method: "POST"});
-  const data = await res.json();
-  if (data.status === "APPROVED") {
-    const exec = await fetch("/api/execute/" + id, {method: "POST"});
-    const result = await exec.json();
-    alert("Execution: " + result.reason);
-  } else {
-    alert("Approval status: " + data.status);
+  try {
+    const txns = await api("/api/transactions");
+    status.textContent = "Transactions loaded: " + txns.length;
+    container.replaceChildren();
+    txns.forEach(t => {
+      const card = el("div", null, "card");
+      card.appendChild(el("strong", t.id));
+      card.appendChild(document.createTextNode(" — " + t.currency + " " + t.amount + " "));
+      card.appendChild(el("small", "(" + (t.source || "unknown source") + ")"));
+      card.appendChild(document.createElement("br"));
+      card.appendChild(document.createTextNode("Status: " + (t.status || "")));
+      card.appendChild(document.createElement("br"));
+      card.appendChild(document.createTextNode("Proposed: "));
+      card.appendChild(el("span", t.proposed_action, "action " + t.proposed_action));
+      card.appendChild(document.createElement("br"));
+      card.appendChild(el("small", t.message || ""));
+      card.appendChild(document.createElement("br"));
+      card.appendChild(document.createTextNode("Approval: "));
+      card.appendChild(el("span", t.approval_status, "status " + t.approval_status));
+      card.appendChild(document.createElement("br"));
+      const approveBtn = el("button", "Approve instruction");
+      approveBtn.disabled = ["APPROVED", "REJECTED", "EXPIRED", "EXECUTED"].includes(t.approval_status);
+      approveBtn.onclick = () => doApprove(t.id, t.proposed_action);
+      const rejectBtn = el("button", "Reject", "reject");
+      rejectBtn.disabled = ["APPROVED", "REJECTED", "EXPIRED", "EXECUTED"].includes(t.approval_status);
+      rejectBtn.onclick = () => doReject(t.id);
+      card.appendChild(approveBtn);
+      card.appendChild(rejectBtn);
+      container.appendChild(card);
+    });
+  } catch (error) {
+    status.textContent = "Could not load transactions: " + error.message;
   }
+}
+async function doApprove(id, action) {
+  try {
+    await postJson("/api/propose/" + encodeURIComponent(id), {action, message: "From dashboard"});
+    const data = await api("/api/approve/" + encodeURIComponent(id), {method: "POST"});
+    alert("Approval status: " + data.status);
+  } catch (error) { alert("Approval failed: " + error.message); }
   load();
 }
-
 async function doReject(id) {
-  // Only reject. Never execute on reject path.
-  const res = await fetch("/api/reject/" + id, {method: "POST"});
-  const data = await res.json();
-  alert("Rejected: " + (data.status || data.error || "unknown"));
+  try {
+    const data = await api("/api/reject/" + encodeURIComponent(id), {method: "POST"});
+    alert("Reject status: " + data.status);
+  } catch (error) { alert("Reject failed: " + error.message); }
   load();
 }
-
 load();
 </script>
 </body>

@@ -2,7 +2,6 @@
 CreatorSettle AI — Approval Layer
 Atomic-style transitions. propose() does not reset existing decided or executed records.
 """
-
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -12,26 +11,32 @@ import threading
 APPROVAL_FILE = Path("approvals.json")
 _lock = threading.Lock()
 
+
 def _load() -> Dict:
     if APPROVAL_FILE.exists():
         try:
-            return json.loads(APPROVAL_FILE.read_text())
+            return json.loads(APPROVAL_FILE.read_text(encoding="utf-8"))
         except Exception:
             return {}
     return {}
 
-def _save(data: Dict):
-    APPROVAL_FILE.write_text(json.dumps(data, indent=2))
 
-def propose(txn_id: str, action: str, message: str, expires_minutes: int = 30) -> str:
+def _save(data: Dict):
+    temp = APPROVAL_FILE.with_suffix(".json.tmp")
+    temp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    temp.replace(APPROVAL_FILE)
+
+
+def propose(txn_id: str, action: str, message: str, expires_minutes: int = 30,
+            metadata: Optional[Dict] = None) -> str:
     with _lock:
         data = _load()
         existing = data.get(txn_id)
         if existing:
             status = existing.get("status")
-            if status in ("APPROVED", "REJECTED", "EXPIRED") or existing.get("executed"):
+            if status in ("APPROVED", "REJECTED", "EXPIRED", "EXECUTED") or existing.get("executed"):
                 return status or "EXECUTED"
-        data[txn_id] = {
+        record = {
             "action": action,
             "message": message,
             "status": "PENDING",
@@ -39,8 +44,12 @@ def propose(txn_id: str, action: str, message: str, expires_minutes: int = 30) -
             "created": datetime.utcnow().isoformat() + "Z",
             "expires": (datetime.utcnow() + timedelta(minutes=expires_minutes)).isoformat() + "Z",
         }
+        if metadata:
+            record["metadata"] = metadata
+        data[txn_id] = record
         _save(data)
         return "PENDING"
+
 
 def decide(txn_id: str, decision: str) -> Optional[str]:
     with _lock:
@@ -50,8 +59,8 @@ def decide(txn_id: str, decision: str) -> Optional[str]:
             return None
         if req.get("executed"):
             return "EXECUTED"
-        if req["status"] != "PENDING":
-            return req["status"]
+        if req.get("status") != "PENDING":
+            return req.get("status")
         if datetime.fromisoformat(req["expires"].replace("Z", "")) < datetime.utcnow():
             req["status"] = "EXPIRED"
             _save(data)
@@ -64,6 +73,7 @@ def decide(txn_id: str, decision: str) -> Optional[str]:
             return req["status"]
         _save(data)
         return req["status"]
+
 
 def get_status(txn_id: str) -> Optional[str]:
     with _lock:
@@ -79,6 +89,7 @@ def get_status(txn_id: str) -> Optional[str]:
                 _save(data)
         return req["status"]
 
+
 def mark_executed(txn_id: str) -> bool:
     with _lock:
         data = _load()
@@ -90,9 +101,10 @@ def mark_executed(txn_id: str) -> bool:
         _save(data)
         return True
 
+
 def is_executed(txn_id: str) -> bool:
-    data = _load()
-    return data.get(txn_id, {}).get("executed", False)
+    return _load().get(txn_id, {}).get("executed", False)
+
 
 def get_record(txn_id: str) -> Optional[Dict]:
     return _load().get(txn_id)
