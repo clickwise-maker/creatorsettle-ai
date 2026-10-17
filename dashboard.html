@@ -18,54 +18,82 @@
   .PENDING { color: #fbbf24; }
   .APPROVED { color: #6ee7b7; }
   .REJECTED { color: #f87171; }
+  .EXECUTED { color: #6ee7b7; }
 </style>
 </head>
 <body>
 <h1>CreatorSettle AI — Seller Dashboard</h1>
-<p>Connected to backend. Approvals are persisted in approvals.json.</p>
+<p>Local only. Approvals persisted in approvals.json.</p>
 
 <div id="status" class="card">Loading...</div>
 <div id="txns"></div>
 
 <script>
+function el(tag, text, cls) {
+  const e = document.createElement(tag);
+  if (text) e.textContent = text;
+  if (cls) e.className = cls;
+  return e;
+}
+
 async function load() {
   const res = await fetch("/api/transactions");
   const txns = await res.json();
-  document.getElementById("status").innerHTML = `<strong>Transactions loaded:</strong> ${txns.length}`;
+  document.getElementById("status").textContent = "Transactions loaded: " + txns.length;
   const container = document.getElementById("txns");
-  container.innerHTML = txns.map(t => `
-    <div class="card" id="card-${t.id}">
-      <strong>${t.id}</strong> — ${t.currency} ${t.amount} <small>(${t.source})</small><br>
-      Status: ${t.status}<br>
-      Proposed: <span class="action ${t.proposed_action}">${t.proposed_action}</span><br>
-      <small>${t.message}</small><br>
-      Approval: <span class="status ${t.approval_status}">${t.approval_status}</span><br>
-      <button onclick="act('${t.id}', 'approve', '${t.proposed_action}', '${t.execution_type}')">Approve</button>
-      <button class="reject" onclick="act('${t.id}', 'reject', '${t.proposed_action}', '${t.execution_type}')">Reject</button>
-    </div>
-  `).join("");
+  container.innerHTML = "";
+  txns.forEach(t => {
+    const card = el("div", null, "card");
+    card.appendChild(el("strong", t.id));
+    card.appendChild(document.createTextNode(" — " + t.currency + " " + t.amount + " "));
+    card.appendChild(el("small", "(" + t.source + ")"));
+    card.appendChild(document.createElement("br"));
+    card.appendChild(document.createTextNode("Status: " + (t.status || "")));
+    card.appendChild(document.createElement("br"));
+    const act = el("span", t.proposed_action, "action " + t.proposed_action);
+    card.appendChild(document.createTextNode("Proposed: "));
+    card.appendChild(act);
+    card.appendChild(document.createElement("br"));
+    card.appendChild(el("small", t.message || ""));
+    card.appendChild(document.createElement("br"));
+    const st = el("span", t.approval_status, "status " + t.approval_status);
+    card.appendChild(document.createTextNode("Approval: "));
+    card.appendChild(st);
+    card.appendChild(document.createElement("br"));
+
+    const approveBtn = el("button", "Approve");
+    approveBtn.onclick = () => doApprove(t.id, t.proposed_action);
+    const rejectBtn = el("button", "Reject", "reject");
+    rejectBtn.onclick = () => doReject(t.id);
+    card.appendChild(approveBtn);
+    card.appendChild(rejectBtn);
+    container.appendChild(card);
+  });
 }
 
-async function act(id, decision, action, execType) {
-  // Propose first if not proposed
-  await fetch(`/api/propose/${id}`, {
+async function doApprove(id, action) {
+  await fetch("/api/propose/" + id, {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({action, message: "From dashboard"})
+    body: JSON.stringify({action: action, message: "From dashboard"})
   });
-  const endpoint = decision === "approve" ? `/api/approve/${id}` : `/api/reject/${id}`;
-  const res = await fetch(endpoint, {method: "POST"});
+  const res = await fetch("/api/approve/" + id, {method: "POST"});
   const data = await res.json();
-  alert(`Approval: ${data.status}`);
   if (data.status === "APPROVED") {
-    const exec = await fetch(`/api/execute/${id}`, {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({action, execution_type: execType})
-    });
+    const exec = await fetch("/api/execute/" + id, {method: "POST"});
     const result = await exec.json();
-    alert(`Execution: ${result.reason}`);
+    alert("Execution: " + result.reason);
+  } else {
+    alert("Approval status: " + data.status);
   }
+  load();
+}
+
+async function doReject(id) {
+  // Only reject. Never execute on reject path.
+  const res = await fetch("/api/reject/" + id, {method: "POST"});
+  const data = await res.json();
+  alert("Rejected: " + (data.status || data.error || "unknown"));
   load();
 }
 
