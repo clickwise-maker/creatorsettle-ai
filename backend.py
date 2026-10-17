@@ -1,16 +1,14 @@
 """
 CreatorSettle AI — Simple Backend
-Serves transactions and handles real approval actions.
-Run: python backend.py
+Binds to 127.0.0.1 by default. Server-side validation.
 """
 
 from flask import Flask, jsonify, request, send_from_directory
 from pathlib import Path
-import json
 
 from creatorsettle_reader import fetch_failed_transactions, get_access_token
 from creatorsettle_decision import decide
-from creatorsettle_approval import propose, decide as approval_decide, get_status, _load
+from creatorsettle_approval import propose, decide as approval_decide, get_status, get_record, _load
 from creatorsettle_execution import execute_action
 
 app = Flask(__name__, static_folder=".")
@@ -50,21 +48,25 @@ def api_propose(txn_id):
 
 @app.route("/api/approve/<txn_id>", methods=["POST"])
 def api_approve(txn_id):
+    record = get_record(txn_id)
+    if not record:
+        return jsonify({"error": "no approval record"}), 400
     status = approval_decide(txn_id, "APPROVE")
     return jsonify({"txn_id": txn_id, "status": status})
 
 @app.route("/api/reject/<txn_id>", methods=["POST"])
 def api_reject(txn_id):
+    record = get_record(txn_id)
+    if not record:
+        return jsonify({"error": "no approval record"}), 400
     status = approval_decide(txn_id, "REJECT")
     return jsonify({"txn_id": txn_id, "status": status})
 
 @app.route("/api/execute/<txn_id>", methods=["POST"])
 def api_execute(txn_id):
-    data = request.get_json() or {}
-    action = data.get("action", "HOLD")
-    exec_type = data.get("execution_type", "instruction")
+    # Ignore client action/type; use stored record
     token = get_access_token()
-    result = execute_action(txn_id, action, exec_type, token)
+    result = execute_action(txn_id, access_token=token)
     return jsonify(result)
 
 @app.route("/api/approvals")
@@ -72,4 +74,5 @@ def api_approvals():
     return jsonify(_load())
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    # Local only by default
+    app.run(host="127.0.0.1", port=5000, debug=False)
