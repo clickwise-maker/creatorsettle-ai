@@ -41,7 +41,11 @@ def execute_action(txn_id: str, client_action: str = "", client_exec_type: str =
             return {"executed": True, "state": "FAILED",
                     "reason": "approved recovery request missing required metadata",
                     "stored_action": stored_action, "verification": None}
-        result = capture_outstanding_balance(sub_id, amount, currency, note=f"CreatorSettle approval {txn_id}")
+        result = capture_outstanding_balance(
+            sub_id, amount, currency,
+            note=f"CreatorSettle approval {txn_id}",
+            request_id=txn_id,
+        )
         return {
             "executed": True,
             "state": result.get("state", "FAILED"),
