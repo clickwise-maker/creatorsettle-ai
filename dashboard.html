@@ -9,43 +9,66 @@
   .card { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 16px; margin: 12px 0; }
   .action { font-weight: bold; }
   .RETRY { color: #6ee7b7; }
-  .ROUTE { color: #fbbf24; }
   .ESCALATE { color: #f87171; }
   .HOLD { color: #94a3b8; }
-  button { background: #d4af37; color: #000; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
+  button { background: #d4af37; color: #000; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 8px; }
+  button.reject { background: #555; color: #fff; }
   small { color: #888; }
+  .status { font-weight: bold; }
+  .PENDING { color: #fbbf24; }
+  .APPROVED { color: #6ee7b7; }
+  .REJECTED { color: #f87171; }
 </style>
 </head>
 <body>
 <h1>CreatorSettle AI — Seller Dashboard</h1>
-<p>Prototype: connects to local demo data. Approval and audit are file-backed.</p>
+<p>Connected to backend. Approvals are persisted in approvals.json.</p>
 
 <div id="status" class="card">Loading...</div>
 <div id="txns"></div>
 
 <script>
 async function load() {
-  // In real use this would call a small backend. For prototype we show the expected flow.
-  document.getElementById("status").innerHTML = `
-    <strong>Mode:</strong> Prototype<br>
-    <small>Real OAuth + test order when credentials present. Recovery execution is instruction-based unless PayPal API supports it.</small>
-  `;
-  const sample = [
-    { id: "MOCK-001", amount: 120.50, status: "INSUFFICIENT_FUNDS", action: "ROUTE", msg: "Suggest different funding source" },
-    { id: "MOCK-002", amount: 89.00, status: "EXPIRED_CARD", action: "ESCALATE", msg: "Update payment method" },
-    { id: "MOCK-003", amount: 250.00, status: "FRAUD_FILTER", action: "ESCALATE", msg: "Review required" },
-  ];
+  const res = await fetch("/api/transactions");
+  const txns = await res.json();
+  document.getElementById("status").innerHTML = `<strong>Transactions loaded:</strong> ${txns.length}`;
   const container = document.getElementById("txns");
-  container.innerHTML = sample.map(t => `
-    <div class="card">
-      <strong>${t.id}</strong> — $${t.amount}<br>
+  container.innerHTML = txns.map(t => `
+    <div class="card" id="card-${t.id}">
+      <strong>${t.id}</strong> — ${t.currency} ${t.amount} <small>(${t.source})</small><br>
       Status: ${t.status}<br>
-      <span class="action ${t.action}">${t.action}</span>: ${t.msg}<br>
-      <button onclick="alert('Approval recorded (prototype)')">Approve</button>
-      <button onclick="alert('Rejected')">Reject</button>
+      Proposed: <span class="action ${t.proposed_action}">${t.proposed_action}</span><br>
+      <small>${t.message}</small><br>
+      Approval: <span class="status ${t.approval_status}">${t.approval_status}</span><br>
+      <button onclick="act('${t.id}', 'approve', '${t.proposed_action}', '${t.execution_type}')">Approve</button>
+      <button class="reject" onclick="act('${t.id}', 'reject', '${t.proposed_action}', '${t.execution_type}')">Reject</button>
     </div>
   `).join("");
 }
+
+async function act(id, decision, action, execType) {
+  // Propose first if not proposed
+  await fetch(`/api/propose/${id}`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({action, message: "From dashboard"})
+  });
+  const endpoint = decision === "approve" ? `/api/approve/${id}` : `/api/reject/${id}`;
+  const res = await fetch(endpoint, {method: "POST"});
+  const data = await res.json();
+  alert(`Approval: ${data.status}`);
+  if (data.status === "APPROVED") {
+    const exec = await fetch(`/api/execute/${id}`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({action, execution_type: execType})
+    });
+    const result = await exec.json();
+    alert(`Execution: ${result.reason}`);
+  }
+  load();
+}
+
 load();
 </script>
 </body>
