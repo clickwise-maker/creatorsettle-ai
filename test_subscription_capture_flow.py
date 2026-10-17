@@ -40,7 +40,7 @@ def test_requires_approval_and_executes_once():
         result = client.post(f"/api/subscription-capture/execute/{request_id}")
         assert result.status_code == 200
         assert result.get_json()["state"] == "CAPTURE_CONFIRMED"
-        capture.assert_called_once_with("I-TEST12345", "12.50", "USD", note=f"CreatorSettle approval {request_id}")
+        capture.assert_called_once_with("I-TEST12345", "12.50", "USD", note=f"CreatorSettle approval {request_id}", request_id=request_id)
 
         # Duplicate execution must be blocked, no second capture.
         duplicate = client.post(f"/api/subscription-capture/execute/{request_id}")
