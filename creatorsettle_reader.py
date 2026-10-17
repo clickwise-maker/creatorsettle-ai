@@ -1,6 +1,6 @@
 """
 CreatorSettle AI — Reader Module
-Fetches transactions from PayPal Sandbox with clear mock fallback.
+Honest transaction fetch. No invented decline reasons.
 """
 
 import os
@@ -14,13 +14,10 @@ load_dotenv()
 BASE_URL = os.getenv("PAYPAL_BASE_URL", "https://api-m.sandbox.paypal.com")
 
 def get_access_token() -> Optional[str]:
-    """Get OAuth2 access token. Returns None on failure."""
     client_id = os.getenv("PAYPAL_CLIENT_ID")
     secret = os.getenv("PAYPAL_SECRET")
-
     if not client_id or not secret:
         return None
-
     try:
         response = requests.post(
             f"{BASE_URL}/v1/oauth2/token",
@@ -35,9 +32,10 @@ def get_access_token() -> Optional[str]:
         print(f"[OAuth] Failed: {e}")
         return None
 
-def fetch_failed_transactions(access_token: str) -> List[Dict]:
+def fetch_failed_transactions(access_token: Optional[str]) -> List[Dict]:
     """
-    Try real Transaction Search. On failure or empty result, return clearly labeled mock data.
+    Fetch real transactions. Only include failed/denied/declined.
+    Do not invent decline reasons. Fall back to clearly labeled mock.
     """
     if not access_token:
         return _mock_transactions()
@@ -62,48 +60,50 @@ def fetch_failed_transactions(access_token: str) -> List[Dict]:
             real = []
             for item in data.get("transaction_details", []):
                 info = item.get("transaction_info", {})
-                status = info.get("transaction_status", "").upper()
-                # Map real status to our decline-like codes for demo
-                decline = None
-                if status in ("DENIED", "FAILED", "PENDING"):
-                    decline = status
-                real.append({
-                    "id": info.get("transaction_id", "UNKNOWN"),
-                    "amount": float(info.get("transaction_amount", {}).get("value", 0) or 0),
-                    "currency": info.get("transaction_amount", {}).get("currency_code", "USD"),
-                    "decline_code": decline,
-                    "retry_count": 0,
-                    "source": "real",
-                })
+                status = (info.get("transaction_status") or "").upper()
+                # Only failed-like statuses. Do not invent reason.
+                if status in ("DENIED", "FAILED", "DECLINED", "VOIDED"):
+                    real.append({
+                        "id": info.get("transaction_id", "UNKNOWN"),
+                        "amount": float(info.get("transaction_amount", {}).get("value", 0) or 0),
+                        "currency": info.get("transaction_amount", {}).get("currency_code", "USD"),
+                        "status": status,
+                        "decline_code": status,  # raw status only
+                        "retry_count": 0,
+                        "source": "real",
+                    })
             if real:
-                print(f"[Reader] Got {len(real)} real transactions.")
+                print(f"[Reader] Got {len(real)} real failed transactions.")
                 return real
-        print(f"[Reader] Real API returned {resp.status_code}. Using mock.")
+            print("[Reader] No failed transactions in real data. Using mock.")
+        else:
+            print(f"[Reader] Real API returned {resp.status_code}. Using mock.")
     except Exception as e:
         print(f"[Reader] Real fetch error: {e}. Using mock.")
 
     return _mock_transactions()
 
+def get_transaction_status(access_token: str, txn_id: str) -> Optional[str]:
+    """Re-fetch a specific transaction status if possible. Returns None if not supported."""
+    # PayPal Transaction Search does not support direct lookup by ID easily in this scope.
+    # Return None to indicate verification not available for this call.
+    return None
+
 def _mock_transactions() -> List[Dict]:
-    """Clearly labeled mock data for demo reliability."""
     return [
-        {"id": "MOCK-001", "amount": 120.50, "currency": "USD", "decline_code": "INSUFFICIENT_FUNDS", "retry_count": 1, "source": "mock"},
-        {"id": "MOCK-002", "amount": 89.00, "currency": "USD", "decline_code": "EXPIRED_CARD", "retry_count": 0, "source": "mock"},
-        {"id": "MOCK-003", "amount": 250.00, "currency": "USD", "decline_code": "FRAUD_FILTER", "retry_count": 2, "source": "mock"},
-        {"id": "MOCK-004", "amount": 45.00, "currency": "USD", "decline_code": "INSUFFICIENT_FUNDS", "retry_count": 2, "source": "mock"},
-        {"id": "MOCK-005", "amount": 15.00, "currency": "USD", "decline_code": None, "retry_count": 0, "source": "mock"},
+        {"id": "MOCK-001", "amount": 120.50, "currency": "USD", "status": "DENIED", "decline_code": "DENIED", "retry_count": 0, "source": "mock"},
+        {"id": "MOCK-002", "amount": 89.00, "currency": "USD", "status": "FAILED", "decline_code": "FAILED", "retry_count": 1, "source": "mock"},
+        {"id": "MOCK-003", "amount": 250.00, "currency": "USD", "status": "PENDING", "decline_code": "PENDING", "retry_count": 0, "source": "mock"},
     ]
 
 def create_test_order(access_token: str) -> Optional[str]:
-    """Real Sandbox action: create a test order (supported recovery-style call)."""
+    """Supported sandbox call — NOT a recovery of an existing failed transaction."""
     if not access_token:
         return None
     try:
         payload = {
             "intent": "CAPTURE",
-            "purchase_units": [{
-                "amount": {"currency_code": "USD", "value": "10.00"}
-            }]
+            "purchase_units": [{"amount": {"currency_code": "USD", "value": "10.00"}}]
         }
         resp = requests.post(
             f"{BASE_URL}/v2/checkout/orders",
@@ -118,18 +118,5 @@ def create_test_order(access_token: str) -> Optional[str]:
         if resp.status_code in (200, 201):
             return resp.json().get("id")
     except Exception as e:
-        print(f"[Order] Failed to create test order: {e}")
+        print(f"[Order] Failed: {e}")
     return None
-
-if __name__ == "__main__":
-    print("=== Reader Test ===")
-    token = get_access_token()
-    if token:
-        print("OAuth: SUCCESS")
-        txns = fetch_failed_transactions(token)
-        print(f"Transactions: {len(txns)} (source: {txns[0].get('source', 'unknown')})")
-        order_id = create_test_order(token)
-        print(f"Test order created: {order_id or 'FAILED'}")
-    else:
-        print("OAuth: FAILED (no credentials or error)")
-        print("Mock transactions:", fetch_failed_transactions(None))
