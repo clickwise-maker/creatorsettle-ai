@@ -1,37 +1,31 @@
 # CreatorSettle AI
 
-**Honest end-to-end settlement recovery prototype.**
+Honest settlement recovery prototype.
 
-Seller connects PayPal → detect failure → agent diagnoses → seller approves → safe action (API or instruction) → verify status → dashboard + audit.
+## What is real
 
-Where PayPal does not support automatic recovery, the agent gives a clear instruction instead of claiming success.
+- PayPal Sandbox OAuth (when credentials present)
+- Transaction Search fetch (when permitted)
+- File-persisted approval
+- Hash-chain audit with tamper detection
+- Decision engine (rules + optional LLM message)
 
-## Workflow
+## What is not real / simulated
 
-1. OAuth + transaction history (PayPal Sandbox)
-2. Detect failure (status, amount, retry count)
-3. Decide: RETRY / ROUTE / HOLD / ESCALATE
-4. Seller approval (file-persisted)
-5. Execute only what the API allows (or return instruction)
-6. Verify result
-7. Dashboard + hash-chain audit
+- **Recovery of an existing failed transaction** — PayPal Sandbox scope used here does not support retrying a specific failed capture. Therefore the agent returns an **instruction**, not an API recovery.
+- Creating a new $10 order is **not** treated as recovery of a previous failure.
+- Status re-verification after action is limited (Transaction Search does not support easy single-ID lookup in this prototype).
+- Dashboard buttons currently show the intended flow; full live backend is out of scope for this submission.
 
-## Quick Start
+## Quick start
 
 ```bash
 pip install -r requirements.txt
 cp .env.example .env
-# Add PayPal Sandbox credentials (and optional LLM key)
+python test_creatorsettle.py
 python creatorsettle_demo.py
-# Open dashboard.html in a browser
 ```
 
-## Honesty Notes
+## Honesty
 
-- Recovery execution is real only for supported Orders API calls (e.g. create order).
-- Alternate funding source and card update are **instructions**, not automatic actions.
-- Approval is file-persisted. Audit is a hash-chain integrity check.
-
-## License
-
-MIT
+No claim is made that a failed payment was automatically recovered. The agent diagnoses, asks for approval, and either delivers a clear instruction or blocks the action.
