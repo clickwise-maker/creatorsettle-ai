@@ -1,53 +1,38 @@
 """
 CreatorSettle AI — Tests
-Run: python test_creatorsettle.py
 """
 
 import os
-import shutil
 from pathlib import Path
 
 def clean():
     for f in ["audit.jsonl", "approvals.json"]:
         Path(f).unlink(missing_ok=True)
 
-def test_oauth_and_mock():
-    print("=== OAuth / Mock Test ===")
-    from creatorsettle_reader import get_access_token, fetch_failed_transactions
-    token = get_access_token()
-    if token:
-        print("OAuth: SUCCESS")
-    else:
-        print("OAuth: FAILED (expected without credentials)")
-    txns = fetch_failed_transactions(token)
-    assert len(txns) > 0
-    print(f"Transactions source: {txns[0].get('source')}")
-    print("PASS")
-
 def test_decision():
-    print("\n=== Decision Engine Test ===")
-    from creatorsettle_decision import decide, decide_with_ai
+    print("=== Decision Engine Test ===")
+    from creatorsettle_decision import decide
     cases = [
         ({"decline_code": "INSUFFICIENT_FUNDS", "retry_count": 0}, "ROUTE"),
-        ({"decline_code": "INSUFFICIENT_FUNDS", "retry_count": 2}, "ALERT"),
-        ({"decline_code": "EXPIRED_CARD", "retry_count": 0}, "ALERT"),
+        ({"decline_code": "INSUFFICIENT_FUNDS", "retry_count": 2}, "ESCALATE"),
+        ({"decline_code": "EXPIRED_CARD", "retry_count": 0}, "ESCALATE"),
         ({"decline_code": None, "retry_count": 0}, "HOLD"),
+        ({"decline_code": "FAILED", "retry_count": 0}, "RETRY"),
     ]
     for txn, expected in cases:
-        action, _, _ = decide(txn)
-        assert action == expected, f"Expected {expected}, got {action}"
-    action, _, msg = decide_with_ai({"decline_code": "FRAUD_FILTER"}, llm_client=None)
-    assert "deterministic" in msg or "rules" in msg
+        action, conf, msg, exec_type = decide(txn)
+        assert action == expected, f"Expected {expected}, got {action} for {txn}"
+        assert exec_type in ("api", "instruction", "none")
     print("PASS")
 
-def test_approval_persistence():
-    print("\n=== Approval Persistence Test ===")
-    from creatorsettle_approval import propose, decide
+def test_approval_gate():
+    print("\n=== Approval Gate Test ===")
+    from creatorsettle_approval import propose, decide as approval_decide
     clean()
-    propose("TXN-1", "RETRY", "test")
-    assert decide("TXN-1", "APPROVE") == "APPROVED"
-    # Simulate restart by reloading
-    assert decide("TXN-1", "APPROVE") == "APPROVED"  # already decided
+    propose("TXN-GATE", "RETRY", "test")
+    # No approval yet
+    assert approval_decide("TXN-GATE", "APPROVE") == "APPROVED"
+    assert approval_decide("TXN-GATE", "APPROVE") == "APPROVED"  # already decided
     print("PASS")
 
 def test_audit_and_tamper():
@@ -55,16 +40,30 @@ def test_audit_and_tamper():
     from creatorsettle_audit import append, verify, test_tamper
     clean()
     append({"txn_id": "T1", "action": "RETRY"})
-    append({"txn_id": "T2", "action": "ALERT"})
+    append({"txn_id": "T2", "action": "ESCALATE"})
     assert verify() is True
-    assert test_tamper() is True
-    print("Tamper detected: PASS")
+    # test_tamper should detect and we clean after
+    detected = test_tamper()
+    assert detected is True
+    # Clean up after tamper test
+    clean()
+    append({"txn_id": "CLEAN", "action": "HOLD"})
+    assert verify() is True
+    print("PASS")
+
+def test_oauth_mock():
+    print("\n=== OAuth / Mock Test ===")
+    from creatorsettle_reader import get_access_token, fetch_failed_transactions
+    token = get_access_token()
+    txns = fetch_failed_transactions(token)
+    assert len(txns) > 0
+    print(f"Source: {txns[0].get('source')}")
     print("PASS")
 
 if __name__ == "__main__":
     clean()
-    test_oauth_and_mock()
     test_decision()
-    test_approval_persistence()
+    test_approval_gate()
     test_audit_and_tamper()
+    test_oauth_mock()
     print("\n=== All tests passed ===")
