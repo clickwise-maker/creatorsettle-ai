@@ -1,17 +1,17 @@
 """
 CreatorSettle AI — Execution
-Verifies approval itself. Never treats unrelated create-order as recovery.
+Server-side validation only. Does not trust client action/type alone.
 """
 
 from typing import Optional, Dict
-from creatorsettle_approval import get_status, is_executed, mark_executed
+from creatorsettle_approval import get_status, is_executed, mark_executed, get_record
 from creatorsettle_reader import get_transaction_status
 
-def execute_action(txn_id: str, action: str, exec_type: str, access_token: Optional[str] = None) -> Dict:
-    """
-    Returns result dict. Checks approval status itself.
-    Blocks on pending / rejected / expired / already executed.
-    """
+def execute_action(txn_id: str, client_action: str = "", client_exec_type: str = "", access_token: Optional[str] = None) -> Dict:
+    record = get_record(txn_id)
+    if not record:
+        return {"executed": False, "reason": "blocked: no approval record", "verification": None}
+
     status = get_status(txn_id)
     if status != "APPROVED":
         return {
@@ -27,25 +27,21 @@ def execute_action(txn_id: str, action: str, exec_type: str, access_token: Optio
             "verification": None,
         }
 
-    # No supported recovery API for existing failed transaction.
-    # Therefore we never call create_test_order here.
-    if exec_type != "instruction":
-        return {
-            "executed": False,
-            "reason": f"no supported execution for type={exec_type}",
-            "verification": None,
-        }
+    # Use stored action, not client-supplied
+    stored_action = record.get("action", "HOLD")
+    # Always instruction for this prototype
+    exec_type = "instruction"
 
-    # Instruction path: mark as "executed" meaning instruction delivered
-    mark_executed(txn_id)
+    if not mark_executed(txn_id):
+        return {"executed": False, "reason": "blocked: failed to mark executed", "verification": None}
 
-    # Attempt verification (usually unavailable)
     verified_status = None
     if access_token:
         verified_status = get_transaction_status(access_token, txn_id)
 
     return {
         "executed": True,
-        "reason": "instruction_given (no API recovery performed)",
+        "reason": "instruction_given (no payment recovery performed)",
+        "stored_action": stored_action,
         "verification": verified_status,
     }
